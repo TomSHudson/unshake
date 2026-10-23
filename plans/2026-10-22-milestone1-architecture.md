@@ -192,3 +192,11 @@ The cross-check cells (section 3) appended to `example_crevasse_iq_joint_inv_tes
    - Add parallel batches only if BLAS threading proves insufficient.
    - Add formal tests once the joint inversion works. The synthetic example and the sanity checks above are the natural starting point.
 7. **Later milestones:** finite and moving sources (a sub-source axis in `gf` plus `FiniteSourceModel`), as described under "Extension path".
+
+### Update 2026-10-23
+- **Added LSQ uncertainty over the whole lune:**
+  - `solvers.lsq_loglike` and `solvers.lsq_lune_profile`, exported at package level;
+  - `plot.lune(values=..., stat=..., vmin=..., colorbar=...)`.
+- **Notebook default.** The notebook's LSQ lune uses fast covariance sampling by default; set `plot_full_lune_lsq = True` for the slower full-lune profile.
+- **Extra install.** `unshake` is also installed editable in `/Users/tomhudson/miniforge3/envs/salvus_src_inv`, the notebook kernel.
+- **Next step 2 (Ricker STF)** continues in `plans/2026-10-23-handoff-ricker-stf.md`.
