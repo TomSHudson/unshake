@@ -6,4 +6,4 @@ from . import forward, misfit, mt, spectra
 from .data import Dataset, Receivers, Source
 from .models import ForceModel, MTModel, MTSpectrumModel
 from .results import Result
-from .solvers import least_squares, make_loglike, monte_carlo
+from .solvers import least_squares, lsq_loglike, lsq_lune_profile, make_loglike, monte_carlo

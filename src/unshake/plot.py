@@ -18,10 +18,15 @@ _LUNE_REFS = {'DC': [1, 0, -1], '+ISO': [1, 1, 1], '-ISO': [-1, -1, -1],
               '+CLVD': [2, -1, -1], '-CLVD': [1, 1, -2], '+crack': [3, 1, 1], '-crack': [-1, -1, -3]}
 
 
-def lune(m6=None, weights=None, result=None, best=None, bins=(30, 60), ax=None, cmap='viridis'):
-    """Lune plot (Hammer projection) of a weighted histogram of MT samples.
+def lune(m6=None, weights=None, result=None, best=None, values=None, stat='max', vmin=None,
+         colorbar=False, bins=(30, 60), ax=None, cmap='viridis'):
+    """Lune plot (Hammer projection) of MT samples.
 
-    Pass either `result` (a `Result`) or `m6` (n, 6) with optional `weights`.
+    Pass either `result` (a `Result`) or `m6` (n, 6) with optional `weights`
+    (plots a weighted histogram). Alternatively pass per-sample `values`
+    (e.g. log-likelihoods) to plot their per-bin `stat` ('max' gives a profile over
+    orientation; any `scipy.stats.binned_statistic_2d` statistic works), shown
+    relative to the overall maximum and clipped at `vmin`.
     `best` (6,) is marked with a star (defaults to the max-likelihood result sample).
     """
     if ax is None:
@@ -31,11 +36,19 @@ def lune(m6=None, weights=None, result=None, best=None, bins=(30, 60), ax=None, 
         best = result.best[:6] if best is None else best
     if m6 is not None:
         g, d = mt.lune(np.atleast_2d(m6))
-        H, ge, de = np.histogram2d(g, d, bins=bins, weights=weights,
-                                   range=[[-np.pi / 6, np.pi / 6], [-np.pi / 2, np.pi / 2]])
+        lune_range = [[-np.pi / 6, np.pi / 6], [-np.pi / 2, np.pi / 2]]
+        if values is None:
+            H, ge, de = np.histogram2d(g, d, bins=bins, weights=weights, range=lune_range)
+            H = np.ma.masked_equal(H, 0)
+        else:
+            from scipy.stats import binned_statistic_2d
+            H, ge, de, _ = binned_statistic_2d(g, d, values, statistic=stat, bins=bins, range=lune_range)
+            H = np.ma.masked_invalid(H - np.nanmax(H))
         GE, DE = np.meshgrid(ge, de, indexing='ij')
         X, Y = _hammer(GE, DE)
-        ax.pcolormesh(X, Y, np.ma.masked_equal(H, 0), cmap=cmap, shading='flat')
+        mesh = ax.pcolormesh(X, Y, H, cmap=cmap, shading='flat', vmin=vmin)
+        if colorbar:
+            plt.colorbar(mesh, ax=ax, shrink=0.6, label='weight' if values is None else f'{stat} - max')
     # Boundary, grid lines and reference sources:
     dd = np.linspace(-np.pi / 2, np.pi / 2, 181)
     for gg in np.radians([-30, -20, -10, 0, 10, 20, 30]):

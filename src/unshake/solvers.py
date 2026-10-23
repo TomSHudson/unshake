@@ -60,6 +60,57 @@ def least_squares(dataset, gf_key='mt', sigma=None, cov_m=None, m_prior=None):
     return cov_post @ b, cov_post
 
 
+def lsq_loglike(m_dirs, m_lsq, cov):
+    """Log-density of the Gaussian LSQ posterior N(m_lsq, cov) for MT directions,
+    maximised (profiled) over a non-negative amplitude a in m = a * m_dir.
+
+    Lets the LSQ uncertainty be evaluated anywhere, e.g. over the whole lune with
+    m_dirs from `mt.sample_lune`. Returns (n,), relative to the peak (0 at m_lsq).
+    """
+    P = np.linalg.inv(cov)
+    u = np.atleast_2d(m_dirs)
+    uPm = u @ (P @ m_lsq)
+    uPu = np.einsum('ni,ij,nj->n', u, P, u)
+    return -0.5 * np.where(uPm > 0, -uPm ** 2 / uPu, 0.0) - 0.5 * (m_lsq @ P @ m_lsq)
+
+
+def lsq_lune_profile(m_lsq, cov, bins=(30, 60), n_random_starts=2, rng=None):
+    """Profile of the LSQ posterior over the whole lune.
+
+    At every lune bin centre, the source type (gamma, delta) is fixed and the
+    orientation (and amplitude, analytically) is optimised to maximise
+    `lsq_loglike`. Starts from the LSQ orientation plus `n_random_starts` random ones.
+
+    Returns (m_dirs (n_bins, 6), loglike (n_bins,)); plot with
+    ``plot.lune(m6=m_dirs, values=loglike, bins=bins)``.
+    """
+    from scipy.optimize import minimize
+    from scipy.spatial.transform import Rotation
+
+    from . import mt
+    rng = np.random.default_rng(rng)
+    ng, nd = bins
+    ge = np.linspace(-np.pi / 6, np.pi / 6, ng + 1)
+    de = np.linspace(-np.pi / 2, np.pi / 2, nd + 1)
+    G, D = np.meshgrid(0.5 * (ge[1:] + ge[:-1]), 0.5 * (de[1:] + de[:-1]), indexing='ij')
+    lams = mt.lune_to_eigenvalues(G.ravel(), D.ravel())
+    _, V = mt.eig(m_lsq)                                     # LSQ principal axes (descending)
+    starts = [np.zeros(3)] + [Rotation.random(random_state=rng).as_rotvec()
+                              for _ in range(n_random_starts)]
+
+    def m_dir(rotvec, lam):
+        R = V @ Rotation.from_rotvec(rotvec).as_matrix()
+        return mt.from_33(R @ np.diag(lam) @ R.T)
+
+    m_out, ll_out = np.zeros((len(lams), 6)), np.zeros(len(lams))
+    for i, lam in enumerate(lams):
+        fits = [minimize(lambda r: -lsq_loglike(m_dir(r, lam), m_lsq, cov)[0], x0, method='BFGS')
+                for x0 in starts]
+        best = min(fits, key=lambda f: f.fun)
+        m_out[i], ll_out[i] = m_dir(best.x, lam), -best.fun
+    return m_out, ll_out
+
+
 def _default_sigma(dataset, gf_key, normalise):
     """Noise level for the Gaussian likelihood when none is given: from
     dataset.noise_std, else the std of the least-squares residual."""
