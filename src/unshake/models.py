@@ -36,7 +36,7 @@ class _Scaled:
 
     def prepare(self, dataset):
         if self.scale is None:
-            m_lsq, _ = least_squares(dataset, gf_key=self.gf_key)
+            m_lsq, _ = least_squares(dataset, gf_key=self.gf_key, check_band=False)
             self.scale = float(mt.norm(m_lsq) if self.gf_key == 'mt' else np.linalg.norm(m_lsq))
 
     def _amplitudes(self, n, rng):
@@ -87,17 +87,17 @@ class MTSpectrumModel(MTModel):
     Parameters: 6 MT components, fc0, vr, rupture azimuth and plunge (radians).
     Forward: MT synthetics filtered per receiver by a source spectrum with corner
     frequency `spectra.apparent_fc(fc0, vr, c, dataset.ray_dirs, rupture_dir)`,
-    where c is `dataset.receivers.velocity`.
+    where c is `dataset.receivers.velocity`. Needs formal GFs (`Dataset.remove_stf`).
 
     The physics here is deliberately minimal (milestone 2 fleshes it out).
     """
 
     def __init__(self, kind='full', fc0_range=(10.0, 200.0), vr_range=(0.0, 1500.0),
-                 mode='unilateral', n=2.0, gamma=1.0, reference=None,
+                 mode='unilateral', n=2.0, gamma=1.0,
                  scale=None, scale_range=None):
         super().__init__(kind, scale, scale_range)
         self.fc0_range, self.vr_range = fc0_range, vr_range
-        self.mode, self.n, self.gamma, self.reference = mode, n, gamma, reference
+        self.mode, self.n, self.gamma = mode, n, gamma
         self.param_names = list(MT_NAMES) + ['fc0', 'vr', 'rupt_az', 'rupt_plunge']
 
     def sample_prior(self, n, rng=None):
@@ -122,5 +122,4 @@ class MTSpectrumModel(MTModel):
         params = np.atleast_2d(params)
         synth = super().forward(params, dataset)
         fc = self.corner_frequencies(params, dataset)
-        return apply_source_spectrum(synth, dataset.dt, fc, n=self.n, gamma=self.gamma,
-                                     reference=self.reference)
+        return apply_source_spectrum(synth, dataset.dt, fc, n=self.n, gamma=self.gamma)

@@ -10,9 +10,12 @@ and relative distances are derived from them. Moment tensors and forces use NED
 
 import copy
 import pickle
+import warnings
 from dataclasses import dataclass, field, replace
 
 import numpy as np
+
+from . import forward
 
 
 @dataclass
@@ -76,6 +79,7 @@ class Dataset:
     weights : optional (n_rec,) per-receiver weights.
     noise_std : optional scalar or (n_rec,) noise standard deviation.
     meta : free-form provenance (GF generator, filter band, STF used for GFs, ...).
+        meta['gf_band'] and meta['data_band'] record the band filter B (see `remove_stf`).
     """
     data: np.ndarray
     gf: dict
@@ -198,6 +202,42 @@ class Dataset:
                     a[i, ..., s:] = 0.0
         new.meta.setdefault('shifts', []).append({'target': target, 'samples': samples.copy()})
         return new
+
+    def remove_stf(self, stf, band=(10.0, 20.0, 120.0, 140.0)):
+        """New Dataset with formal band-limited GFs (the simulation STF divided out) and
+        data band-limited by the same filter B = `spectra.flat_band(f, *band)`.
+
+        stf : the moment-rate function of the wavelet used to make the GFs; callable
+            f -> spectrum, or a sampled trace (t, s). For Salvus use ``wavelet.get_stf_rate()``,
+            since Salvus applies the wavelet as the moment (see `forward.stf_spectrum`).
+        band : (f0, f1, f2, f3) in Hz; keep it inside the STF's band and the mesh limit.
+        """
+        meta = dict(self.meta, gf_band=tuple(band), data_band=tuple(band),
+                    gf=f"{self.meta.get('gf', '')}; STF removed -> formal band-limited GF")
+        return replace(self, data=forward.bandlimit(self.data, self.dt, band),
+                       gf={k: forward.remove_stf(v, self.dt, stf, band) for k, v in self.gf.items()},
+                       meta=meta)
+
+    def bandlimit(self, band, target='data'):
+        """New Dataset with the data (target='data') or GFs (target='gf') band-limited by
+        B = `spectra.flat_band(f, *band)`, e.g. data for GFs simulated with a flat-spectrum STF."""
+        new = replace(self, meta=dict(self.meta, **{f'{target}_band': tuple(band)}))
+        if target == 'data':
+            new.data = forward.bandlimit(self.data, self.dt, band)
+        else:
+            new.gf = {k: forward.bandlimit(v, self.dt, band) for k, v in self.gf.items()}
+        return new
+
+    def check_band(self):
+        """Print a reminder that the GFs and data must share the same band filter B;
+        warn if either band is unrecorded or they differ."""
+        gb, db = self.meta.get('gf_band'), self.meta.get('data_band')
+        print(f"Note: GFs and data must be band-limited by the same filter B: gf_band={gb}, data_band={db}")
+        if gb is None or db is None:
+            warnings.warn("gf_band/data_band not recorded in Dataset.meta: GFs may still contain the "
+                          "simulation STF (see Dataset.remove_stf).")
+        elif tuple(gb) != tuple(db):
+            warnings.warn(f"GF band {gb} differs from data band {db}.")
 
     def estimate_noise(self, t1, t2):
         """Set and return per-receiver noise_std from the data in a (pre-event) window."""

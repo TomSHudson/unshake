@@ -2,10 +2,12 @@
 
 Plain functions, so that the theory can be swapped while it is being developed.
 
-TODO (open issue): the Salvus GFs are generated with a Ricker source-time
-function. Before fitting corner frequencies on real data, either regenerate the
-GFs with a broadband/impulsive STF, or divide the Ricker spectrum out (see
-`ricker_spectrum` and `forward.apply_source_spectrum(..., reference=...)`).
+Green's functions from a simulation are always band-limited and include the
+simulation's source time function (e.g. the Salvus Ricker). unshake works with
+formal band-limited GFs, G * B, where B = `flat_band(f, *band)`. Get them with
+`Dataset.remove_stf` (or `forward.remove_stf`); the data must be band-limited by
+the same B (`forward.bandlimit`). The source spectrum is then the only
+source-time term in the forward model.
 """
 
 import numpy as np
@@ -34,6 +36,27 @@ def ricker_spectrum(f, f0):
     """Amplitude spectrum of a Ricker wavelet with peak frequency f0 (peak normalised to 1)."""
     r = (np.asarray(f) / f0) ** 2
     return r * np.exp(1.0 - r)
+
+
+def flat_band(f, f0, f1, f2, f3):
+    """Band filter B(f): zero below f0, cosine ramp up over f0-f1, flat (1) over f1-f2,
+    cosine ramp down over f2-f3, zero above f3. Same shape as Salvus's FlatSpectrumWavelet."""
+    f = np.abs(np.asarray(f, dtype=float))
+    B = np.zeros_like(f)
+    up, flat, down = (f >= f0) & (f < f1), (f >= f1) & (f < f2), (f >= f2) & (f < f3)
+    B[up] = 0.5 * (1.0 - np.cos(np.pi * (f[up] - f0) / (f1 - f0)))
+    B[flat] = 1.0
+    B[down] = 0.5 * (1.0 + np.cos(np.pi * (f[down] - f2) / (f3 - f2)))
+    return B
+
+
+def amplitude_spectrum(x, dt, nfft=None):
+    """Hann-tapered amplitude spectrum along the last axis. Returns (f, |X| * dt)."""
+    x = np.asarray(x, dtype=float)
+    n = x.shape[-1]
+    nfft = nfft or int(2 ** np.ceil(np.log2(4 * n)))
+    X = np.fft.rfft(x * np.hanning(n), n=nfft, axis=-1)
+    return np.fft.rfftfreq(nfft, dt), np.abs(X) * dt
 
 
 def rupture_direction(azimuth, plunge):

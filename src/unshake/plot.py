@@ -3,7 +3,8 @@
 import matplotlib.pyplot as plt
 import numpy as np
 
-from . import mt
+from . import mt, spectra
+from .forward import stf_spectrum, synthetics
 from .misfit import normalise_traces
 
 
@@ -127,3 +128,80 @@ def fc_azimuth(model, params, dataset, ax=None):
     ax.set_xlabel('Azimuth (deg)')
     ax.set_ylabel('Apparent fc (Hz)')
     return ax
+
+
+def spectra_check(dataset, m, stf=None, mesh_fmax=None, band=None, fc=(50, 100, 200),
+                  noise_window=(None, 0.0), fmax_plot=300.0, gf_key='mt'):
+    """Diagnostic spectra for deciding how to treat the GF source time function.
+
+    Panels: (1) data, synthetic (GFs x m) and pre-pick noise amplitude spectra (median and
+    10-90 % over channels); (2) data/synthetic ratio, which estimates S_true / STF, with
+    Brune(fc) / STF overlays scaled to the ratio over 20-80 Hz; (3) the per-channel ratio
+    (normalised per channel) sorted by azimuth (receiver index if no coordinates).
+
+    stf : moment-rate STF still in the GFs (callable or (t, s), e.g. Salvus
+        ``wavelet.get_stf_rate()``, see `forward.stf_spectrum`); None if formal.
+    mesh_fmax : GF mesh limit (e.g. 2 * f0) and band : (f0, f1, f2, f3), drawn as lines.
+    noise_window : (t1, t2) for the noise spectrum (None = first sample); scaled to the
+        signal window length.
+    """
+    d, s = dataset.data, synthetics(dataset.gf[gf_key], m)
+    f, D = spectra.amplitude_spectrum(d, dataset.dt)
+    _, S = spectra.amplitude_spectrum(s, dataset.dt)
+    t = dataset.times
+    t1 = t[0] if noise_window[0] is None else noise_window[0]
+    sel = (t >= t1) & (t < noise_window[1])
+    _, N = spectra.amplitude_spectrum(d[:, sel], dataset.dt, nfft=2 * (len(f) - 1))
+    N = N * np.sqrt(dataset.n_t / sel.sum())                 # stationary noise scales as sqrt(duration)
+    R = np.ones_like(f) if stf is None else np.abs(stf_spectrum(stf, f))
+    ratio = D / (S + 1e-30)
+    keep = f <= fmax_plot
+
+    fig, axes = plt.subplots(1, 3, figsize=(15, 4.5))
+    ax = axes[0]
+    for X, col, lab in ((D, 'k', 'data'), (S, 'r', 'synthetic'), (N, '0.5', 'noise')):
+        lo, med, hi = np.percentile(X[:, keep], [10, 50, 90], axis=0)
+        ax.fill_between(f[keep], lo, hi, color=col, alpha=0.2, lw=0)
+        ax.plot(f[keep], med, color=col, label=lab)
+    ax.set_yscale('log')
+    ax.set_ylabel('Amplitude')
+    ax.set_title('Spectra (median, 10-90 %)')
+
+    ax = axes[1]
+    lo, med, hi = np.percentile(ratio[:, keep], [10, 50, 90], axis=0)
+    ax.fill_between(f[keep], lo, hi, color='k', alpha=0.2, lw=0)
+    ax.plot(f[keep], med, 'k', label='data / synthetic')
+    ref = (f >= 20) & (f <= 80)
+    for fc_i in (*fc, None):
+        curve = (1.0 if fc_i is None else spectra.brune(f, fc_i)) / np.maximum(R, 1e-6)
+        curve = curve * np.exp(np.median(np.log(med[ref[keep]]) - np.log(curve[ref])))
+        ax.plot(f[keep], curve[keep], '--', label='1 / STF' if fc_i is None else f'Brune {fc_i} Hz / STF')
+    ax.set_yscale('log')
+    ax.set_ylim(lo[ref[keep]].min() / 30, hi[ref[keep]].max() * 30)
+    ax.set_title('Ratio (estimates S_true / STF)')
+
+    ax = axes[2]
+    try:
+        order, y, ylab = np.argsort(dataset.azimuth), np.sort(dataset.azimuth), 'Azimuth (deg)'
+    except ValueError:
+        order, y, ylab = np.arange(dataset.n_rec), np.arange(dataset.n_rec), 'Receiver index'
+    lr = np.log10(ratio[order][:, keep] + 1e-30)
+    lr -= np.median(lr[:, ref[keep]], axis=1, keepdims=True)
+    im = ax.pcolormesh(f[keep], y, lr, cmap='RdBu_r', vmin=-1.5, vmax=1.5, shading='nearest')
+    fig.colorbar(im, ax=ax, label='log10 ratio (per-channel, rel. 20-80 Hz)')
+    ax.set_ylabel(ylab)
+    ax.set_title('Ratio per channel')
+
+    for ax in axes:
+        ax.set_xlabel('Frequency (Hz)')
+        ax.set_xlim(0, fmax_plot)
+        if mesh_fmax is not None:
+            ax.axvline(mesh_fmax, color='m', ls=':', label='mesh limit')
+        if band is not None:
+            ax.axvspan(band[1], band[2], color='g', alpha=0.08, label='band B (flat)')
+            for fb in (band[0], band[3]):
+                ax.axvline(fb, color='g', ls=':', lw=0.8)
+    axes[0].legend(fontsize=7)
+    axes[1].legend(fontsize=7)
+    fig.tight_layout()
+    return fig

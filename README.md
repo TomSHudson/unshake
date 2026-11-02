@@ -24,7 +24,12 @@ pip install unshake
 ```bash
 pip install -e .            # editable install
 pip install -e ".[plot]"    # + obspy for beachballs
+pip install -e ".[salvus]"  # + helpers for the Salvus GF driver
 ```
+
+Generating Green's functions (`unshake.salvus_fwd_driver.gen_synths_salvus`) needs
+Salvus, which is not on PyPI: install it via Mondaic first. The rest of unshake
+imports and runs without it.
 
 ## Architecture (milestone 1)
 
@@ -33,12 +38,13 @@ src/unshake/
   data.py     Dataset (+ Receivers, Source): waveforms, GFs, geometry, metadata for one event
   mt.py       MT convention (NED [nn, ee, dd, ne, nd, ed]), conversions, lune, strike/dip/rake, samplers
   spectra.py  source spectra (Brune/Boatwright) and Doppler apparent corner frequency
-  forward.py  synthetics = GF x source; frequency-domain source-spectrum filter
+  forward.py  synthetics = GF x source; source-spectrum filter; band-limit / remove GF STF
   misfit.py   VR, PCC, NCC, Gaussian log-likelihood (vectorised over samples)
   models.py   source models (MTModel, ForceModel, MTSpectrumModel stub): params -> synthetics + prior
   solvers.py  least_squares, monte_carlo (pluggable: any model, any sampler)
   results.py  Result: samples, log-likelihoods, posterior weights, save/load
-  plot.py     lune, beachball, wavefield / trace fits, fc vs azimuth
+  plot.py     lune, beachball, wavefield / trace fits, fc vs azimuth, spectra check
+  salvus_fwd_driver.py  optional: run Salvus to generate GFs (needs Salvus)
 ```
 
 New physics = a new model class in `models.py`; new inference = a new function in `solvers.py`.

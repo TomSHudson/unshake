@@ -22,6 +22,7 @@ classifiers = [
 
 [project.optional-dependencies]
 plot = ["obspy"]
+salvus = ["xarray", "pandas", "pyproj", "obspy"]   # Salvus itself is installed separately (Mondaic)
 
 [project.urls]
 Homepage = "https://github.com/TomSHudson/unshake"

@@ -21,7 +21,7 @@ def _design_matrix(dataset, gf_key):
     return gf.transpose(0, 2, 1).reshape(-1, gf.shape[1])     # (n_rec * n_t, n_comp), receiver-major
 
 
-def least_squares(dataset, gf_key='mt', sigma=None, cov_m=None, m_prior=None):
+def least_squares(dataset, gf_key='mt', sigma=None, cov_m=None, m_prior=None, check_band=True):
     """Linear least-squares source inversion d = G m.
 
     sigma : optional scalar or (n_rec,) data noise std (diagonal data covariance).
@@ -30,8 +30,11 @@ def least_squares(dataset, gf_key='mt', sigma=None, cov_m=None, m_prior=None):
     cov_m, m_prior : optional Gaussian prior on m (Tarantola / Fichtner eq. 6.8-6.9).
 
     Dataset weights (if set) scale each receiver's rows by sqrt(weight).
+    check_band : print the GF/data band-filter note (`Dataset.check_band`).
     Returns (m, cov_m_post), shapes (n_comp,) and (n_comp, n_comp).
     """
+    if check_band:
+        dataset.check_band()
     G = _design_matrix(dataset, gf_key)
     d = dataset.data.ravel()
     n_t = dataset.n_t
@@ -119,7 +122,7 @@ def _default_sigma(dataset, gf_key, normalise):
         if normalise:   # convert to per-trace normalised units
             sigma = sigma / np.max(np.abs(dataset.data), axis=1)
         return sigma
-    m, _ = least_squares(dataset, gf_key=gf_key)
+    m, _ = least_squares(dataset, gf_key=gf_key, check_band=False)
     d, s = dataset.data, synthetics(dataset.gf[gf_key], m)
     if normalise:
         d, s = mf.normalise_traces(d), mf.normalise_traces(s)
@@ -137,6 +140,7 @@ def make_loglike(dataset, misfit='gaussian', sigma=None, mode='stacked', normali
              (temperature=1 reproduces SeisSrcInv's exp(-(1 - sim) / 2)).
     normalise : normalise each data and synthetic trace by its max (amplitude-free fit).
     """
+    dataset.check_band()
     data = mf.normalise_traces(dataset.data) if normalise else dataset.data
     w = dataset.weights
     if misfit == 'gaussian':
