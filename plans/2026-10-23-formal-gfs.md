@@ -185,3 +185,56 @@ The output was compared with the full Aki & Richards eq. 4.29 solution (near, in
 - The data/synthetic ratio, which now estimates Ṁ_true(f), is flat over 20–120 Hz. This suggests fc is at or above the top of the band.
 - The MT changes more than before: cos ∠ = 0.88 to the original. VR is 0.004.
 - These GFs predate the Mxz/Myz and DAS-projection fixes, so this interpretation is provisional until Salvus is re-run.
+
+---
+
+## Summary of changes for commit (2026-11-02)
+
+### Files in `git/unshake`
+**New:**
+- **`src/unshake/salvus_fwd_driver.py`:** `run_salvus_sm_synthetics.py` moved into the package.
+  - Salvus and its helpers are an optional import. `HAS_SALVUS` records whether they loaded, and calling `gen_synths_salvus` without them raises a clear `ImportError`.
+  - New optional arguments, whose defaults keep the old behaviour: `wavelet` (default Ricker), `max_frequency_in_hertz` (default 2·f0) and `elements_per_wavelength` (default 2.0).
+  - Fixed: the `Mxz` and `Myz` sources also set `mxx=1`.
+  - Fixed: `domain_dict` was ignored. `None` now gives `DEFAULT_DOMAIN_DICT`, which is the old hard-coded box.
+  - Fixed: the DAS strain projection is now ε_nn = nᵢnⱼεᵢⱼ, using all six Salvus strain channels (shears are engineering strains) and a signed 3D fibre direction.
+  - The docstring documents the Salvus moment convention and the recommended `FlatSpectrumWavelet`.
+- **`plans/2026-10-23-formal-gfs.md`:** this file.
+
+**Modified:**
+- **`spectra.py`:** new `flat_band` (the band filter B) and `amplitude_spectrum`. The module docstring now explains formal band-limited GFs, replacing the old TODO.
+- **`forward.py`:** new `bandlimit`, `stf_spectrum` and `remove_stf`. Removed the `reference=` argument from `apply_source_spectrum`.
+- **`data.py`:** new `Dataset.remove_stf`, `Dataset.bandlimit` and `Dataset.check_band`.
+- **`solvers.py`:** `least_squares` (with a new `check_band=True` argument) and `make_loglike` print the band note and warn when the bands are missing or differ.
+- **`models.py`:** removed `reference=` from `MTSpectrumModel`. Internal least-squares calls skip the band note.
+- **`plot.py`:** new `spectra_check` diagnostic.
+- **`pyproject.toml`:** new optional extra, `salvus = ["xarray", "pandas", "pyproj", "obspy"]`.
+- **`README.md`:** install note for the Salvus extra, and an updated module list.
+
+### Suggested commit message
+```
+Formal band-limited GFs, Salvus driver moved into unshake
+
+- Move run_salvus_sm_synthetics.py to unshake.salvus_fwd_driver (optional
+  Salvus import; new wavelet / max_frequency_in_hertz /
+  elements_per_wavelength args; [salvus] extra)
+- Fix driver bugs: Mxz/Myz sources also set mxx=1; domain_dict ignored;
+  DAS strain projection (now n_i n_j eps_ij with engineering shears)
+- Remove the simulation STF from GFs: forward.remove_stf / bandlimit,
+  Dataset.remove_stf / bandlimit / check_band, spectra.flat_band.
+  Salvus applies the wavelet as moment M(t) (verified against Aki &
+  Richards), so the moment rate (get_stf_rate) is divided out
+- Solvers print a GF/data band-filter note; drop reference= hook
+- plot.spectra_check diagnostic; spectra.amplitude_spectrum
+```
+
+### Outside the repo (`python/initial_joint_inv_development`, not under git)
+- **`run_salvus_sm_synthetics.py`** is now a shim that re-exports from `unshake.salvus_fwd_driver`, so the Gornergletscher notebooks keep working.
+- **`example_crevasse_iq_joint_inv_testing.ipynb`:**
+  - the commented import in cell 1 now points to the new module;
+  - two new cells at the end: a heading, and the spectra diagnostic with formal GFs using `get_stf_rate()`.
+
+### Before relying on results
+- **Existing GFs are stale.** The GFs on disk and in the saved Dataset predate the Mxz/Myz and projection fixes, so re-run Salvus before relying on them.
+- **Changed default:** `gen_synths_salvus` now writes correctly projected DAS strain, so new runs won't reproduce old outputs.
+- **Removed argument:** any code still passing `reference=` to `apply_source_spectrum` or `MTSpectrumModel` will now raise an error.
