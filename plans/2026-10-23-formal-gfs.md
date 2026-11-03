@@ -238,3 +238,21 @@ Formal band-limited GFs, Salvus driver moved into unshake
 - **Existing GFs are stale.** The GFs on disk and in the saved Dataset predate the Mxz/Myz and projection fixes, so re-run Salvus before relying on them.
 - **Changed default:** `gen_synths_salvus` now writes correctly projected DAS strain, so new runs won't reproduce old outputs.
 - **Removed argument:** any code still passing `reference=` to `apply_source_spectrum` or `MTSpectrumModel` will now raise an error.
+
+## Notebook: new Salvus run for the example event (added 2026-11-02, not yet run)
+Section 3.y of `example_crevasse_iq_joint_inv_testing.ipynb` has three new cells.
+
+**3.y.1: Salvus run.**
+- Uses the fixed driver with `FlatSpectrumWavelet(5, 10, 140, 150, shift 0.04 s)`, `max_frequency_in_hertz=150`, `elements_per_wavelength=3`, and an end time of 0.25 s, which covers the whole data window.
+- Project: `/Volumes/4tb_extssd/salvus_tmp_workspace/src_inv`. The driver deletes and recreates this project if it exists.
+- Output goes to a new directory, `data_out/<event_uid>_salvus_v2_flat150`. The cell refuses to run if that directory already holds synthetics.
+
+**3.y.2: formal band-limited GFs.**
+- Divides out the moment rate with `remove_stf((t_rate − t_sim_start, rate), band)`, where t_sim_start = `wavelet.get_auto_start_time()`. Output sample k is then at origin + k·dt.
+- Timing referencing checked on the full-space test: offset 0–2 samples, against 16 if the reference were wrong.
+- The rest of the prep matches section 2.2: pre-pad shift (zero-filled), anisotropy correction, and cross-correlation shifts against Mxx. The shift window is now symmetric, [−20, 20], because the old one-sided [−25, 0] window was absorbing the Ricker start-time lag.
+- Band-limits the data by the same B, uses NED ordering, and saves `ds_v2` to the new directory.
+
+**3.y.3: inversion check.**
+- Least squares (VR, lune, strike/dip/rake, and the angle to the old MT) and a 10k-sample Monte Carlo.
+- Lune, beachball and wavefield plots, plus `spectra_check`.
