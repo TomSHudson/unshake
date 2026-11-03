@@ -125,6 +125,46 @@ def sdr(m6):
     return planes[0], planes[1]
 
 
+def decompose(m6):
+    """ISO / CLVD / DC decomposition (Vavrycuk 2015, J. Seismol., doi:10.1007/s10950-014-9463-y).
+
+    With eigenvalues l1 >= l2 >= l3 and eigenvectors e1 (T), e3 (P):
+        M_ISO = (l1 + l2 + l3) / 3,  M_CLVD = 2/3 (l1 + l3 - 2 l2),
+        M_DC = (l1 - l3 - |l1 + l3 - 2 l2|) / 2,  M = |M_ISO| + |M_CLVD| + M_DC,
+    and the DC tensor M_DC (e1 e1^T - e3 e3^T).
+
+    Returns (c_iso, c_clvd, c_dc, m_dc, m_ndc): signed ISO and CLVD fractions, the DC
+    fraction in [0, 1], the DC part as a 6-vector, and the rest (ISO + CLVD) as a 6-vector.
+    """
+    m6 = np.asarray(m6, dtype=float)
+    lam, v = eig(m6)
+    l1, l2, l3 = lam[..., 0], lam[..., 1], lam[..., 2]
+    m_iso = (l1 + l2 + l3) / 3.0
+    m_clvd = 2.0 / 3.0 * (l1 + l3 - 2.0 * l2)
+    m_dc = 0.5 * (l1 - l3 - np.abs(l1 + l3 - 2.0 * l2))
+    total = np.abs(m_iso) + np.abs(m_clvd) + m_dc
+    scale = np.where(total > 0, 1.0 / np.where(total > 0, total, 1.0), 0.0)
+    e1, e3 = v[..., :, 0], v[..., :, 2]
+    dc6 = from_33(m_dc[..., None, None] * (e1[..., :, None] * e1[..., None, :]
+                                           - e3[..., :, None] * e3[..., None, :]))
+    return m_iso * scale, m_clvd * scale, m_dc * scale, dc6, m6 - dc6
+
+
+def from_sdr(strike, dip, rake, m0=1.0):
+    """Double-couple 6-vector(s) (NED) from strike, dip, rake in degrees
+    (Aki & Richards 2002, box 4.4). The Frobenius norm is sqrt(2) * m0."""
+    phi, delta, lam = (np.radians(np.asarray(a, dtype=float)) for a in (strike, dip, rake))
+    sd, cd, s2d, c2d = np.sin(delta), np.cos(delta), np.sin(2 * delta), np.cos(2 * delta)
+    sl, cl = np.sin(lam), np.cos(lam)
+    nn = -(sd * cl * np.sin(2 * phi) + s2d * sl * np.sin(phi) ** 2)
+    ee = sd * cl * np.sin(2 * phi) - s2d * sl * np.cos(phi) ** 2
+    dd = s2d * sl
+    ne = sd * cl * np.cos(2 * phi) + 0.5 * s2d * sl * np.sin(2 * phi)
+    nd = -(cd * cl * np.cos(phi) + c2d * sl * np.sin(phi))
+    ed = -(cd * cl * np.sin(phi) - c2d * sl * np.cos(phi))
+    return m0 * np.stack([nn, ee, dd, ne, nd, ed], -1)
+
+
 # --- Random samplers ---
 # All take (n, rng) and return unit-norm samples, shape (n, 6) or (n, 3).
 

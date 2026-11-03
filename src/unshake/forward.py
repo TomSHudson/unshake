@@ -33,6 +33,20 @@ def apply_source_spectrum(synth, dt, fc, n=2.0, gamma=1.0):
     return np.fft.irfft(np.fft.rfft(synth, axis=-1) * spec, n=n_t, axis=-1)
 
 
+def convolve_stf(synth, dt, spec):
+    """Convolve synthetics with a (complex, e.g. causal) source time function spectrum.
+
+    The GFs must be formal (STF removed, see `remove_stf`), so that this STF is the only
+    source-time term. Done in the frequency domain (rfft, multiply, irfft), zero-padded
+    so that the convolution is linear, not circular; the result is cut back to n_t.
+
+    synth : (..., n_rec, n_t)
+    spec : callable f -> spectrum broadcastable to (..., n_rec, n_f), e.g.
+        ``lambda f: stfs.brune_stf_spectrum(f, fc[..., None])``.
+    """
+    return _filter(np.asarray(synth, dtype=float), dt, spec)
+
+
 def _filter(x, dt, spec_fn):
     """Multiply x (..., n_t) by spec_fn(f) in the frequency domain, zero-padded to avoid wrap-around."""
     n_t = x.shape[-1]

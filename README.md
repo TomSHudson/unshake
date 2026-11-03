@@ -36,11 +36,13 @@ imports and runs without it.
 ```
 src/unshake/
   data.py     Dataset (+ Receivers, Source): waveforms, GFs, geometry, metadata for one event
-  mt.py       MT convention (NED [nn, ee, dd, ne, nd, ed]), conversions, lune, strike/dip/rake, samplers
+  mt.py       MT convention (NED [nn, ee, dd, ne, nd, ed]), conversions, lune, strike/dip/rake,
+              ISO/CLVD/DC decomposition, samplers
   spectra.py  source spectra (Brune/Boatwright) and Doppler apparent corner frequency
+  stfs.py     causal source time functions (Brune, sum of two Brunes) for convolution with formal GFs
   forward.py  synthetics = GF x source; source-spectrum filter; band-limit / remove GF STF
   misfit.py   VR, PCC, NCC, Gaussian log-likelihood (vectorised over samples)
-  models.py   source models (MTModel, ForceModel, MTSpectrumModel stub): params -> synthetics + prior
+  models.py   source models (MTModel, ForceModel, MTTwoBruneModel, MTDCDirectivityModel, MTSpectrumModel stub): params -> synthetics + prior
   solvers.py  least_squares, monte_carlo (pluggable: any model, any sampler)
   results.py  Result: samples, log-likelihoods, posterior weights, save/load
   plot.py     lune, beachball, wavefield / trace fits, fc vs azimuth, spectra check
@@ -48,7 +50,8 @@ src/unshake/
 ```
 
 New physics = a new model class in `models.py`; new inference = a new function in `solvers.py`.
-Plans live in `plans/`; a synthetic example is in `examples/synthetic_mt_recovery.py`.
+Plans live in `plans/`; a synthetic example is in `examples/synthetic_mt_recovery.py`, and a
+forward demo of (directional) Brune STFs on small Salvus GFs is in `examples/directional_stf_demo.ipynb`.
 
 ```python
 import unshake

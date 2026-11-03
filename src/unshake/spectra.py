@@ -92,3 +92,27 @@ def apparent_fc(fc0, vr, c, ray_dirs, rupture_dir, mode='unilateral'):
     if mode == 'bilateral':
         return fc0 / (1.0 + mach * np.abs(cos_theta))
     raise ValueError(f"Unknown mode '{mode}'")
+
+
+def apparent_fc_vector(fc0, v, c, ray_dirs):
+    """Unilateral Doppler corner frequency from a rupture velocity vector:
+    fc0 / (1 - v . r_i / c_i), the same as `apparent_fc` with vr cos(theta) = v . r_i
+    (no rupture direction needed at v = 0).
+
+    fc0 : (n,); v : (n, 3) rupture velocity vectors (ENU, m/s); c : scalar or (n_rec,);
+    ray_dirs : (n_rec, 3) unit take-off vectors (ENU). Returns (n, n_rec).
+    """
+    fc0 = np.atleast_1d(np.asarray(fc0, dtype=float))[:, None]
+    v_dot_r = np.atleast_2d(v) @ np.asarray(ray_dirs).T
+    return fc0 / (1.0 - v_dot_r / np.asarray(c, dtype=float))
+
+
+def rupture_from_vector(v):
+    """Rupture speed, azimuth (clockwise from north) and plunge (positive down), in
+    radians, from velocity vector(s) v (..., 3) in ENU. Inverse of
+    `rupture_direction` (azimuth and plunge are 0 where v = 0)."""
+    v = np.asarray(v, dtype=float)
+    vr = np.linalg.norm(v, axis=-1)
+    azimuth = np.arctan2(v[..., 0], v[..., 1]) % (2.0 * np.pi)
+    plunge = np.arcsin(np.clip(-v[..., 2] / np.where(vr > 0, vr, 1.0), -1.0, 1.0))
+    return vr, azimuth, plunge
