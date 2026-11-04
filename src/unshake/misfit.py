@@ -85,4 +85,22 @@ def gaussian_loglike(data, synth, sigma, weights=None):
     return _out(-0.5 * chi2, single)
 
 
+def noise_correlation_factor(noise):
+    """Variance inflation factor n_t / n_eff for correlated (e.g. band-limited) noise.
+
+    The Gaussian likelihood treats every time sample as independent. Band-limited noise
+    has fewer independent samples, n_eff < n_t, so that likelihood is too narrow. Using
+    sigma_eff = sigma * sqrt(factor) in its place approximately corrects this.
+
+    noise : (n_rec, n_t) noise traces, e.g. the residual of a good fit, or a pre-event window.
+    The factor is estimated from the trace-averaged power spectrum P(f) as
+        factor = n_f * sum(P^2) / sum(P)^2,
+    which is 1 for white noise and 1 / (fraction of the frequency band occupied) for noise
+    with a flat spectrum in a band. It is exact for such flat-band noise, and an
+    approximation otherwise (the exact approach would whiten the data by 1 / sqrt(P)).
+    """
+    P = np.mean(np.abs(np.fft.rfft(np.atleast_2d(noise), axis=-1)) ** 2, axis=0)
+    return float(len(P) * np.sum(P ** 2) / np.sum(P) ** 2)
+
+
 SIMILARITY = {'vr': vr, 'pcc': pcc, 'ncc': ncc}

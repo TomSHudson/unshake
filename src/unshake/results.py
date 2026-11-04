@@ -15,12 +15,18 @@ class Result:
     params : (n, n_params) samples; columns named by param_names.
     loglike : (n,) log-likelihood of each sample.
     vr : (n,) variance reduction of each sample (for interpretation).
+    equal_weights : False for samples drawn from the prior (`monte_carlo`), which are
+        weighted by their likelihood; True for samples that are already posterior draws
+        (`mcmc`), which all have the same weight.
+    meta : run information. For `mcmc` it includes 'ess' (from the chain autocorrelation),
+        which `ess` then reports.
     """
     params: np.ndarray
     param_names: list
     loglike: np.ndarray
     vr: np.ndarray | None = None
     meta: dict = field(default_factory=dict)
+    equal_weights: bool = False
 
     def __repr__(self):
         return (f"Result({self.meta.get('model', '')}, n={len(self)}, "
@@ -38,13 +44,19 @@ class Result:
 
     @property
     def weights(self):
-        """Normalised posterior weights (flat prior over the samples drawn)."""
+        """Normalised posterior weights: proportional to the likelihood for prior samples,
+        equal for posterior draws (equal_weights)."""
+        if self.equal_weights:
+            return np.full(len(self), 1.0 / len(self))
         w = np.exp(self.loglike - np.max(self.loglike))
         return w / w.sum()
 
     @property
     def ess(self):
-        """Effective sample size, 1 / sum(w^2)."""
+        """Effective sample size: meta['ess'] if the sampler set it (MCMC, from the chain
+        autocorrelation), else 1 / sum(w^2) of the weights."""
+        if 'ess' in self.meta:
+            return float(self.meta['ess'])
         return 1.0 / np.sum(self.weights ** 2)
 
     @property

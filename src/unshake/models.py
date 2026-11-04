@@ -17,6 +17,10 @@ also uses these optional methods (see `MTDCDirectivityModel`):
                             -> (n_params,) starting model
     starts(p0, n, rng)      -> (n, n_params) extra starting models (multi-start)
     check_params(params)    -> None   (warn about e.g. constraints not set by the bounds)
+
+and `solvers.mcmc` uses
+
+    log_prior(params)       -> (n,) log prior density (up to a constant), -inf outside the support
 """
 
 import warnings
@@ -274,6 +278,20 @@ class MTDCDirectivityModel(MTModel):
     def prior_residuals(self, params):
         """v / sigma_v: the Gaussian prior on v as least-squares residuals (damping)."""
         return np.asarray(params)[7:10] / self.sigma_v
+
+    def log_prior(self, params):
+        """Log prior density (up to a constant), (n,), for `solvers.mcmc`.
+
+        Flat in the MT components within `bounds()`, log-uniform in fc0 over fc0_range, and
+        the truncated isotropic Gaussian on v (sigma_v, |v| <= v_max), as in `sample_prior`
+        for fc0 and v. -inf outside these limits.
+        """
+        params = np.atleast_2d(params)
+        lo, hi = self.bounds()
+        v2 = np.sum(params[:, 7:10] ** 2, axis=1)
+        inside = np.all((params >= lo) & (params <= hi), axis=1) & (v2 <= self.v_max ** 2)
+        fc0 = np.clip(params[:, 6], lo[6], None)                 # keeps the log finite outside
+        return np.where(inside, -np.log(fc0) - 0.5 * v2 / self.sigma_v ** 2, -np.inf)
 
     def starts(self, p0, n, rng=None):
         """n extra starting models for multi-start: p0 with v of size sigma_v / 2 in

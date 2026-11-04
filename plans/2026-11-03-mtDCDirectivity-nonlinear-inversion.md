@@ -164,6 +164,8 @@ This plan, the method assessment below, and an Outcome section with the numbers 
 ### Next
 Phase 2: the adaptive Metropolis MCMC, seeded from the NLLS optimum and `cov`. See above.
 
+**Update 2026-11-04:** Phase 2 is implemented (`plans/2026-11-04-mtDCDirectivity-mcmc.md`), and the too-small GN uncertainties are corrected for correlated noise (`plans/2026-11-04-correlated-noise-uncertainty.md`).
+
 ---
 
 ## Changes commited in commit: Initial NLLS (non-linear least squares) MT + DC directivity inversion
