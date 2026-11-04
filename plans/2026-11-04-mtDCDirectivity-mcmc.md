@@ -35,6 +35,8 @@
   - `ess` uses `meta['ess']` when the sampler sets it.
 - **Exports and docs:** `unshake.mcmc` is exported, and the README is updated.
 - **Notebook:** `examples/directional_inversion_demo.ipynb` §5 (MCMC on the demo data) and §6 (MCMC on the pure crack).
+  - §7 compares the waveforms of each method's best solution (VP start, MC best, NLLS, MCMC best).
+  - §8 compares the moment tensors (beachballs) and lune sampling (MC VR per bin, MC best samples, NLLS draws, MCMC samples, and a zoom).
 
 ## Results (demo data: 60 % DC, fc0 = 60 Hz, **v** = 0.6 vs towards 45°, SNR 50)
 
