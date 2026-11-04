@@ -1,7 +1,9 @@
 """Inversion engines.
 
-least_squares : linear inversion of the Green's functions (no sampling).
-monte_carlo   : independent random samples from the model prior, weighted by likelihood.
+least_squares           : linear inversion of the Green's functions (no sampling).
+nonlinear_least_squares : non-linear (Gauss-Newton type) inversion of any model, with
+                          multi-start and a Gauss-Newton covariance.
+monte_carlo             : independent random samples from the model prior, weighted by likelihood.
 
 A sampler takes (model, dataset, ...) and returns a `Result`; an MCMC sampler
 (e.g. emcee) can be added alongside `monte_carlo` using the same `loglike` builder.
@@ -172,6 +174,16 @@ def monte_carlo(model, dataset, n, misfit='gaussian', sigma=None, mode='stacked'
     if hasattr(model, 'prepare'):
         model.prepare(dataset)
     gf_key = getattr(model, 'gf_key', 'mt')
+    p0 = getattr(model, 'p0', None)
+    if misfit == 'gaussian' and sigma is None and dataset.noise_std is None and p0 is not None:
+        # The model has a starting fit (e.g. MTDCDirectivityModel): use its residual, since the
+        # default (LSQ on the GFs alone) ignores the source time function.
+        s = model.forward(p0, dataset)
+        d = dataset.data
+        if normalise:
+            d, s = mf.normalise_traces(d), mf.normalise_traces(s)
+        sigma = float(np.std(d - s))
+        print(f"monte_carlo: no noise level given, using the starting-model residual std = {sigma:.3g}")
     loglike = make_loglike(dataset, misfit, sigma, mode, normalise, temperature, max_lag, gf_key)
     data_vr = mf.normalise_traces(dataset.data) if normalise else dataset.data
 
@@ -192,3 +204,83 @@ def monte_carlo(model, dataset, n, misfit='gaussian', sigma=None, mode='stacked'
                         'scale': getattr(model, 'scale', None), 'misfit': misfit,
                         'mode': mode, 'normalise': normalise, 'temperature': temperature,
                         'uid': dataset.source.uid, 'n': int(n)})
+
+
+def nonlinear_least_squares(model, dataset, p0=None, sigma=None, n_starts=4, rng=None, **lsq_kw):
+    """Non-linear least-squares inversion with `scipy.optimize.least_squares` (trust-region
+    reflective, bounded, finite-difference Jacobian).
+
+    Minimises 0.5 |r|^2 with
+        r = [ sqrt(w_i) (d_i - u_i(p)) / sigma_i  (all traces, flattened),
+              model.prior_residuals(p)            (if the model has it, e.g. damping) ].
+
+    model : needs `forward`, `bounds()` and `param_scales(p)`; optionally `prepare`,
+        `prior_residuals`, `starts` and `check_params` (see `models.MTDCDirectivityModel`).
+    p0 : starting model; default `model.p0` from `model.prepare(dataset)`.
+    sigma : scalar or (n_rec,) data noise std. Falls back to `dataset.noise_std`. If neither
+        is set, it starts from the std of the starting residual, is re-estimated as
+        sigma^2 = chi^2 / (N - n_params) at the optimum, and the fit is repeated once.
+    n_starts : extra starts from `model.starts(p0, n_starts, rng)`; the lowest cost wins.
+    lsq_kw : passed to `scipy.optimize.least_squares`.
+
+    Returns (p, cov, info): the optimum (n_params,), the Gauss-Newton covariance
+    (J^T J)^-1 (n_params, n_params) and a dict (sigma, cost, vr, nfev, start_costs, result).
+
+    The covariance assumes white noise. For band-limited (correlated) noise it is too small,
+    by about sqrt(n_t / n_eff), e.g. n_eff ~ 2 * bandwidth * window length.
+    """
+    from scipy.optimize import least_squares as scipy_lsq
+
+    dataset.check_band()
+    if p0 is None or getattr(model, 'scale', 0.0) is None:
+        model.prepare(dataset)
+    p0 = np.asarray(model.p0 if p0 is None else p0, dtype=float)
+    lo, hi = model.bounds()
+    x_scale = model.param_scales(p0)
+    prior = getattr(model, 'prior_residuals', None)
+    w = np.ones(dataset.n_rec) if dataset.weights is None else dataset.weights
+    data = dataset.data
+
+    sigma = dataset.noise_std if sigma is None else sigma
+    estimate_sigma = sigma is None
+    if estimate_sigma:
+        sigma = float(np.std(data - model.forward(p0, dataset)[0]))
+
+    def make_resid(sigma):
+        rw = np.sqrt(w) / np.broadcast_to(np.asarray(sigma, dtype=float), (dataset.n_rec,))
+
+        def resid(p):
+            r = ((data - model.forward(p, dataset)[0]) * rw[:, None]).ravel()
+            return r if prior is None else np.r_[r, prior(p)]
+        return resid
+
+    def fit(x0, sigma):
+        return scipy_lsq(make_resid(sigma), np.clip(x0, lo, hi), bounds=(lo, hi),
+                         x_scale=x_scale, method='trf', **lsq_kw)
+
+    starts = [p0]
+    if n_starts and hasattr(model, 'starts'):
+        starts += list(model.starts(p0, n_starts, rng))
+    tic = time.time()
+    fits = [fit(x0, sigma) for x0 in starts]
+    best = min(fits, key=lambda f: f.cost)
+    nfev = sum(f.nfev for f in fits)
+    if estimate_sigma:
+        n_data = data.size
+        chi2 = 2.0 * best.cost - (0.0 if prior is None else np.sum(prior(best.x) ** 2))
+        sigma = sigma * np.sqrt(chi2 / (n_data - len(p0)))
+        best = fit(best.x, sigma)
+        nfev += best.nfev
+
+    p = best.x
+    J = best.jac * x_scale                                      # conditioned (scaled) Jacobian
+    cov = x_scale[:, None] * np.linalg.pinv(J.T @ J, hermitian=True) * x_scale[None, :]
+    synth = model.forward(p, dataset)[0]
+    vr = float(mf.vr(data, synth, weights=dataset.weights))
+    print(f"nonlinear_least_squares: {len(starts)} start(s), {nfev} forward evaluations in "
+          f"{time.time() - tic:.1f} s; cost {best.cost:.4g}, VR {vr:.4f}, "
+          f"sigma {np.mean(sigma):.3g}{' (estimated)' if estimate_sigma else ''}")
+    if hasattr(model, 'check_params'):
+        model.check_params(p)
+    return p, cov, {'sigma': sigma, 'cost': best.cost, 'vr': vr, 'nfev': nfev,
+                    'start_costs': [f.cost for f in fits], 'result': best}

@@ -43,7 +43,7 @@ src/unshake/
   forward.py  synthetics = GF x source; source-spectrum filter; band-limit / remove GF STF
   misfit.py   VR, PCC, NCC, Gaussian log-likelihood (vectorised over samples)
   models.py   source models (MTModel, ForceModel, MTTwoBruneModel, MTDCDirectivityModel, MTSpectrumModel stub): params -> synthetics + prior
-  solvers.py  least_squares, monte_carlo (pluggable: any model, any sampler)
+  solvers.py  least_squares, nonlinear_least_squares, monte_carlo (pluggable: any model, any sampler)
   results.py  Result: samples, log-likelihoods, posterior weights, save/load
   plot.py     lune, beachball, wavefield / trace fits, fc vs azimuth, spectra check
   salvus_fwd_driver.py  optional: run Salvus to generate GFs (needs Salvus)
@@ -51,7 +51,9 @@ src/unshake/
 
 New physics = a new model class in `models.py`; new inference = a new function in `solvers.py`.
 Plans live in `plans/`; a synthetic example is in `examples/synthetic_mt_recovery.py`, and a
-forward demo of (directional) Brune STFs on small Salvus GFs is in `examples/directional_stf_demo.ipynb`.
+forward demo of (directional) Brune STFs on small Salvus GFs is in `examples/directional_stf_demo.ipynb`,
+and the non-linear inversion of the DC-directivity model (MC and NLLS) is in
+`examples/directional_inversion_demo.ipynb`.
 
 ```python
 import unshake

@@ -7,8 +7,20 @@ To add new physics, write a new class with this interface (no base class needed)
     sample_prior(n, rng)        -> (n, n_params)
     forward(params, dataset)    -> (n, n_rec, n_t)
 
-The solvers in `unshake.solvers` only use this interface.
+The solvers in `unshake.solvers` only use this interface. `solvers.nonlinear_least_squares`
+also uses these optional methods (see `MTDCDirectivityModel`):
+
+    bounds()                -> (lo, hi), each (n_params,), finite
+    param_scales(p)         -> (n_params,) typical size of each parameter near p
+    prior_residuals(params) -> (n_prior,) r with 0.5 |r|^2 = -log prior (+ const)
+    find_non_linear_starting_model_params(dataset)
+                            -> (n_params,) starting model
+    starts(p0, n, rng)      -> (n, n_params) extra starting models (multi-start)
+    check_params(params)    -> None   (warn about e.g. constraints not set by the bounds)
 """
+
+import warnings
+from dataclasses import replace
 
 import numpy as np
 
@@ -177,6 +189,17 @@ class MTTwoBruneModel(MTModel):
         return convolve_stf(synth, dataset.dt, lambda f: stfs.two_brune_spectrum(f, fc0, fc2, w2))
 
 
+def _single_brune_lsq(dataset, fc0):
+    """Linear MT least squares with one causal Brune STF at fc0 for the whole MT.
+
+    Returns (m (6,), rss), with rss the (weighted) residual sum of squares.
+    """
+    gf = convolve_stf(dataset.gf['mt'], dataset.dt, lambda f: stfs.brune_stf_spectrum(f, fc0))
+    m, _ = least_squares(replace(dataset, gf={'mt': gf}), gf_key='mt', check_band=False)
+    r2 = np.sum((dataset.data - synthetics(gf, m)) ** 2, axis=-1)
+    return m, float(r2.sum() if dataset.weights is None else r2 @ dataset.weights)
+
+
 class MTDCDirectivityModel(MTModel):
     """Moment tensor whose double-couple part ruptures with directivity.
 
@@ -191,6 +214,10 @@ class MTDCDirectivityModel(MTModel):
     Brune with corner fc0. Needs formal GFs (`Dataset.remove_stf`).
 
     Prior on v: isotropic zero-mean Gaussian (sigma_v), truncated at |v| <= v_max.
+
+    For `solvers.nonlinear_least_squares`: `find_non_linear_starting_model_params` (variable projection over fc0),
+    `bounds` (finite: |m_k| <= a_max * scale, fc0 in fc0_range, |v_j| <= v_max, with
+    a_max = scale_range[1] or 3), `param_scales` and `prior_residuals` (v / sigma_v).
     """
 
     def __init__(self, kind='full', fc0_range=(10.0, 200.0), sigma_v=900.0, v_max=1600.0,
@@ -198,6 +225,68 @@ class MTDCDirectivityModel(MTModel):
         super().__init__(kind, scale, scale_range)
         self.fc0_range, self.sigma_v, self.v_max = fc0_range, sigma_v, v_max
         self.param_names = list(MT_NAMES) + ['fc0', 'v_e', 'v_n', 'v_u']
+        self.p0 = None
+
+    def prepare(self, dataset):
+        """Set the starting model `p0` (`find_non_linear_starting_model_params`) and, if not given, `scale` = ||m0||.
+
+        (The base class would take the scale from LSQ on the formal GFs, which have no STF,
+        so it is biased for data low-passed by the Brune STF.)
+        """
+        self.p0 = self.find_non_linear_starting_model_params(dataset)
+        if self.scale is None:
+            self.scale = float(mt.norm(self.p0[:6]))
+
+    def find_non_linear_starting_model_params(self, dataset, fc0=None, fc0_grid=15):
+        """Starting model by variable projection: one Brune STF at fc0 for the whole MT,
+        the MT solved linearly (`least_squares`) at each fc0, v = 0.
+
+        fc0 : use this corner frequency (e.g. measured from the data) and skip the search.
+        fc0_grid : number of log-spaced fc0 values over fc0_range for the coarse scan; the
+            best one is refined by a bounded 1-D minimisation in log fc0 between its neighbours.
+        Returns p0 = [m0, fc0, 0, 0, 0].
+        """
+        if fc0 is None:
+            from scipy.optimize import minimize_scalar
+            x = np.linspace(*np.log(self.fc0_range), fc0_grid)
+            rss = [_single_brune_lsq(dataset, np.exp(xi))[1] for xi in x]
+            i = int(np.argmin(rss))
+            lo, hi = x[max(i - 1, 0)], x[min(i + 1, len(x) - 1)]
+            opt = minimize_scalar(lambda xi: _single_brune_lsq(dataset, np.exp(xi))[1],
+                                  bounds=(lo, hi), method='bounded', options={'xatol': 1e-3})
+            fc0 = float(np.exp(opt.x))
+        m0, _ = _single_brune_lsq(dataset, fc0)
+        return np.r_[m0, fc0, 0.0, 0.0, 0.0]
+
+    def bounds(self):
+        """Finite (lo, hi) bounds on the parameters."""
+        if self.scale is None:
+            raise ValueError("Model scale not set: call model.prepare(dataset) or pass scale=")
+        a = self.scale * (self.scale_range[1] if self.scale_range is not None else 3.0)
+        hi = np.r_[np.full(6, a), self.fc0_range[1], np.full(3, self.v_max)]
+        lo = np.r_[np.full(6, -a), self.fc0_range[0], np.full(3, -self.v_max)]
+        return lo, hi
+
+    def param_scales(self, p):
+        """Typical size of each parameter near p (for conditioning the optimiser)."""
+        return np.r_[np.full(6, self.scale), p[6], np.full(3, self.sigma_v)]
+
+    def prior_residuals(self, params):
+        """v / sigma_v: the Gaussian prior on v as least-squares residuals (damping)."""
+        return np.asarray(params)[7:10] / self.sigma_v
+
+    def starts(self, p0, n, rng=None):
+        """n extra starting models for multi-start: p0 with v of size sigma_v / 2 in
+        uniformly random directions (MT and fc0 unchanged). Returns (n, n_params)."""
+        out = np.tile(np.asarray(p0, dtype=float), (n, 1))
+        out[:, 7:10] = 0.5 * self.sigma_v * mt.sample_force(n, rng)   # unit vectors on the sphere
+        return out
+
+    def check_params(self, params):
+        """Warn if the rupture speed |v| exceeds v_max (the bounds are per component)."""
+        vr = np.linalg.norm(np.asarray(params)[7:10])
+        if vr > self.v_max:
+            warnings.warn(f"|v| = {vr:.0f} m/s exceeds v_max = {self.v_max:.0f} m/s")
 
     def sample_prior(self, n, rng=None):
         rng = np.random.default_rng(rng)
