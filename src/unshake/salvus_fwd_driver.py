@@ -17,7 +17,10 @@
 # (Salvus and its helpers are optional: unshake imports without them, and
 # gen_synths_salvus raises an ImportError only when called without Salvus.)
 import os
+import sys
 import pathlib
+import contextlib
+import subprocess
 import numpy as np
 import matplotlib.pyplot as plt
 
@@ -45,12 +48,32 @@ DEFAULT_DOMAIN_DICT = {'x0': -100.0, 'x1': 100.0, 'y0': -100.0, 'y1': 100.0, 'z0
 
 
 
+#----------------------------------------------- Define helper functions -----------------------------------------------
+@contextlib.contextmanager
+def _keep_awake(enabled=True):
+    """Stop macOS sleeping while the block runs (no-op if disabled, or not macOS)."""
+    proc = None
+    if enabled and sys.platform == "darwin":
+        try:
+            # -i idle, -m disk, -s system sleep (on AC power); -w: exit if this process dies.
+            proc = subprocess.Popen(["caffeinate", "-ims", "-w", str(os.getpid())])
+        except OSError:
+            proc = None
+    try:
+        yield
+    finally:
+        if proc is not None:
+            proc.terminate()
+
+
 #----------------------------------------------- Define main functions -----------------------------------------------
 def gen_synths_salvus(project_path, domain_dict, xyz_src_m, receivers_df, medium_model_dict, centre_freq_Hz, 
                         output_waveforms_settings_dict={'output_fs_Hz': 1000, 'gaussian_noise_dur_s': 0, 'snr_amp': 100.0, 
                         'add_noise_to_signal': False, 'wfs_outdir' : "data_out/example_iq"}, gen_body_waves_only=False,
                         end_time_in_seconds=0.1, wavelet=None, max_frequency_in_hertz=None,
-                        elements_per_wavelength=2.0, verbosity=0):
+                        elements_per_wavelength=2.0, absorbing_reference_velocity=1900.0,
+                        absorbing_number_of_wavelengths=1.0, volume_output=True, ranks_per_job=4,
+                        attenuation=True, keep_awake=True, verbosity=0):
     """Function to generate synthetic seismograms using Salvus.
     
     Args:
@@ -87,6 +110,21 @@ def gen_synths_salvus(project_path, domain_dict, xyz_src_m, receivers_df, medium
                                     >= the highest frequency in the wavelet (e.g. f3 = 150 Hz above).
     elements_per_wavelength (float): Mesh elements per minimum wavelength. Default 2.0 (coarse; ~3 is
                                     recommended with tensor_order=2 for accurate GFs up to max frequency).
+    absorbing_reference_velocity (float): Reference velocity (m/s) of the absorbing layers. With
+                                    reference_frequency = centre_freq_Hz, the layer width is
+                                    absorbing_number_of_wavelengths * absorbing_reference_velocity / centre_freq_Hz.
+                                    Default 1900 m/s (ice); use about vs of the medium otherwise.
+    absorbing_number_of_wavelengths (float): Width of the absorbing layers in wavelengths. Default 1.0.
+    volume_output (bool): If True (default), also write the volumetric displacement every 10 time
+                                    steps (large for big 3-D meshes; only receiver output is used here).
+    ranks_per_job (int): MPI ranks per simulation. Default 4. The local site runs the 6 jobs one after
+                                    another, so this sets how many cores are used. It must be <= the
+                                    site's max_ranks.
+    attenuation (bool): If True (default), viscoelastic run with linear solids (Q from medium_model_dict).
+                                    False runs purely elastic, which is cheaper. Use it when Q is so high
+                                    that attenuation is negligible over the model.
+    keep_awake (bool): If True (default), stop macOS sleeping while the simulations run (via
+                                    `caffeinate`). Does nothing on other platforms.
     verbosity (int): Verbosity level of the output.
     
     Returns:
@@ -183,7 +221,7 @@ def gen_synths_salvus(project_path, domain_dict, xyz_src_m, receivers_df, medium
     # Define free surface parameter:
     if gen_body_waves_only:
         free_surface_config = False # Turns off free surface (and installs absorbing boundary!)
-        num_wavelengths_absorb_bc = 1.0 #3.5
+        num_wavelengths_absorb_bc = float(absorbing_number_of_wavelengths) #3.5
         # print("WARNING: gen_body_waves_only=True not yet implemented!!!")
         # absorbing_boundary_config = sn.AbsorbingBoundaryParameters(
         #     reference_frequency=float(round(centre_freq_Hz)),
@@ -193,7 +231,7 @@ def gen_synths_salvus(project_path, domain_dict, xyz_src_m, receivers_df, medium
         #     ),
     else:
         free_surface_config = ["z1"]
-        num_wavelengths_absorb_bc = 1.0
+        num_wavelengths_absorb_bc = float(absorbing_number_of_wavelengths)
         # absorbing_boundary_config = sn.AbsorbingBoundaryParameters(
         #     reference_frequency=float(round(centre_freq_Hz)),
         #     number_of_wavelengths=1.0,#1.0,
@@ -210,8 +248,8 @@ def gen_synths_salvus(project_path, domain_dict, xyz_src_m, receivers_df, medium
     # Using the volumetric model we specified before.
     model_configuration=sn.ModelConfiguration(
         volume_models=["my_volume_model"],
-        # And for attenuation:
-        linear_solids=sn.LinearSolids(reference_frequency=1.0),
+        # And for attenuation (Salvus raises a ValueError if linear solids are given with attenuation off):
+        linear_solids=sn.LinearSolids(reference_frequency=1.0) if attenuation else None,
     ),
     # Event specific configuration.
     event_configuration=sn.EventConfiguration(
@@ -220,7 +258,7 @@ def gen_synths_salvus(project_path, domain_dict, xyz_src_m, receivers_df, medium
         waveform_simulation_configuration=sn.WaveformSimulationConfiguration(
             end_time_in_seconds=end_time_in_seconds,#0.1,
             # And for attenuation:
-            attenuation=True
+            attenuation=bool(attenuation)
         ),
     ),
     # Absorbing boundaries everywhere but the top.
@@ -228,7 +266,7 @@ def gen_synths_salvus(project_path, domain_dict, xyz_src_m, receivers_df, medium
     absorbing_boundaries=sn.AbsorbingBoundaryParameters(
             reference_frequency=float(round(centre_freq_Hz)),
             number_of_wavelengths=num_wavelengths_absorb_bc, #1.0,#1.0,
-            reference_velocity=1900.0,
+            reference_velocity=float(absorbing_reference_velocity),
             free_surface=free_surface_config, #["z1"],
     ), #absorbing_boundary_config,
     )
@@ -238,24 +276,27 @@ def gen_synths_salvus(project_path, domain_dict, xyz_src_m, receivers_df, medium
         p.visualizations.notebook.simulation_setup("my_tmp_src_inv_fwd_simulation")
     
     # 6. Run the simulation:
-    p.simulations.launch(
-    simulation_configuration="my_tmp_src_inv_fwd_simulation",
-    events=p.events.list(),
-    # Determines where and how to run. Depending on the site
-    # it will either directly launch, use a job queuing system, use GPUs, ...
-    # The simulations will be automatically load balanced.
-    site_name=SALVUS_FLOW_SITE_NAME,
-    ranks_per_job=4, #2,
-    # For many applications, volumetric output is not necessary, for
-    # illustrative purposes we use it here.
-    extra_output_configuration={
-        "volume_data": {
-            "sampling_interval_in_time_steps": 10,
-            "fields": ["displacement"],
-        },
-    },    
-    )
-    p.simulations.query(block=True)
+    # Volumetric output is optional (large for big 3-D meshes; only receiver output is used):
+    extra_output = {}
+    if volume_output:
+        extra_output['extra_output_configuration'] = {
+            "volume_data": {
+                "sampling_interval_in_time_steps": 10,
+                "fields": ["displacement"],
+            },
+        }
+    with _keep_awake(keep_awake):
+        p.simulations.launch(
+        simulation_configuration="my_tmp_src_inv_fwd_simulation",
+        events=p.events.list(),
+        # Determines where and how to run. Depending on the site
+        # it will either directly launch, use a job queuing system, use GPUs, ...
+        # The simulations will be automatically load balanced.
+        site_name=SALVUS_FLOW_SITE_NAME,
+        ranks_per_job=int(ranks_per_job),
+        **extra_output,
+        )
+        p.simulations.query(block=True)
 
     # 7. Retrieve the synthetic seismograms:
     # Write waveform data to file:
