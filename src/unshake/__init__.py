@@ -2,7 +2,7 @@
 
 __version__ = "0.0.1"
 
-from . import forward, misfit, mt, spectra, stfs
+from . import forward, misfit, mt, qc, spectra, stfs
 from .data import Dataset, Receivers, Source
 from .models import ForceModel, MTDCDirectivityModel, MTModel, MTSpectrumModel, MTTwoBruneModel
 from .results import Result

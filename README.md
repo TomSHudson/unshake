@@ -46,6 +46,7 @@ src/unshake/
   solvers.py  least_squares, nonlinear_least_squares, monte_carlo, mcmc (pluggable: any model, any sampler)
   results.py  Result: samples, log-likelihoods, posterior weights, save/load
   plot.py     lune, beachball, wavefield / trace fits, fc vs azimuth, spectra check
+  qc.py       post-inversion QC: data-synthetic cross-correlation lags vs take-off direction
   salvus_fwd_driver.py  optional: run Salvus to generate GFs (needs Salvus)
 ```
 
